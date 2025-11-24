@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Transpilador Py → Swift</title>
+
+    <!-- JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap"
+        rel="stylesheet"
+    />
+
+    <!-- Prism (Dark Theme) -->
+    <link
+        href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css"
+        rel="stylesheet"
+    />
+
+    <style>
+        :root {
+            /* Backgrounds */
+            --bg-app: #0e1116;
+            --window-bg: #161b22;
+            --toolbar-bg: #1d232c;
+            --editor-bg: #0e1116;
+            --swift-bg: #1a1f27; /* Nova cor para o fundo do Swift */
+            --border-color: #30363d;
+
+            /* Syntax colors */
+            --kw: #ff7b72;
+            --func: #d2a8ff;
+            --string: #a5d6a7;
+            --number: #79c0ff;
+            --comment: #8b949e;
+            --text: #e6edf3;
+
+            /* Button */
+            --btn-green: #2ea043;
+        }
+
+        body {
+            background-color: var(--bg-app);
+            margin: 0;
+            padding: 20px;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: "JetBrains Mono", monospace;
+            background-image:
+                linear-gradient(90deg, #1a1f27 1px, transparent 1px),
+                linear-gradient(#1a1f27 1px, transparent 1px);
+            background-size: 40px 40px;
+            color: var(--text);
+        }
+
+        .window {
+            width: 95%;
+            max-width: 1400px;
+            height: 90vh;
+            background: var(--window-bg);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+        }
+
+        .title-bar {
+            padding: 15px 20px;
+            border-bottom: 2px solid var(--func);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--window-bg);
+        }
+
+        .lights { display: flex; gap: 8px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; }
+        .dot.red { background: #ff5f56; }
+        .dot.yellow { background: #ffbd2e; }
+        .dot.green { background: #27c93f; }
+
+        .app-title {
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .toolbar {
+            padding: 10px 20px;
+            background: var(--toolbar-bg);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .prompt .u { color: var(--kw); }
+        .prompt .h { color: var(--number); }
+        .prompt .p { color: var(--comment); }
+
+        .run-btn {
+            background: transparent;
+            border: 2px solid var(--btn-green);
+            color: var(--btn-green);
+            padding: 6px 20px;
+            font-family: inherit;
+            font-weight: 800;
+            border-radius: 6px;
+            cursor: pointer;
+            box-shadow: 3px 3px 0 var(--btn-green);
+            transition: 100ms;
+            text-transform: uppercase;
+        }
+
+        .run-btn:hover {
+            background: var(--btn-green);
+            color: white;
+        }
+
+        .run-btn:active {
+            transform: translate(2px,2px);
+            box-shadow: 1px 1px 0 var(--btn-green);
+        }
+
+        .workspace {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+            background: var(--editor-bg);
+        }
+
+        .pane {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            min-height: 0;
+            border-right: 1px solid var(--border-color);
+        }
+
+        .pane:last-child { border-right: none; }
+
+        .badge {
+            position: absolute;
+            top: 12px;
+            right: 20px;
+            padding: 5px 10px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            border-radius: 4px;
+            text-transform: uppercase;
+            border: 1px solid;
+            z-index: 10;
+        }
+
+        .badge.py {
+            background: #0d253f;
+            color: var(--number);
+            border-color: #384e69;
+        }
+        .badge.swift {
+            background: #2b1b46;
+            color: var(--func);
+            border-color: #4d2c7c;
+        }
+
+        .editor {
+            flex: 1;
+            padding: 40px 20px 20px 20px;
+            font-size: 14px;
+            line-height: 1.5;
+            overflow: auto;
+            white-space: pre;
+            outline: none;
+        }
+
+        #python-editor {
+            background: var(--editor-bg);
+            color: var(--text);
+        }
+
+        #swift-editor {
+            background: var(--swift-bg);
+            color: var(--text);
+        }
+
+        .status {
+            background: var(--toolbar-bg);
+            border-top: 1px solid var(--border-color);
+            padding: 8px 20px;
+            font-size: 0.8rem;
+            color: var(--comment);
+        }
+
+        .token.keyword { color: var(--kw) !important; font-weight: 700; }
+        .token.function { color: var(--func) !important; }
+        .token.string { color: var(--string) !important; }
+        .token.number { color: var(--number) !important; }
+        .token.comment { color: var(--comment) !important; }
+    </style>
+</head>
+<body>
+
+<div class="window">
+    <div class="title-bar">
+        <div class="lights">
+            <div class="dot red"></div>
+            <div class="dot yellow"></div>
+            <div class="dot green"></div>
+        </div>
+
+        <div class="app-title">PY → SWIFT <span style="color:#666; font-weight:400;">v1.0</span></div>
+
+        <div style="width:50px;"></div>
+    </div>
+
+    <div class="toolbar">
+        <div class="prompt">
+            <span class="u">usuário</span>@<span class="h">py2swift</span>:<span class="p">~/transpilador</span>$
+        </div>
+        <button class="run-btn" onclick="runTranspiler()">BUILD & RUN</button>
+    </div>
+
+    <div class="workspace">
+
+        <div class="pane">
+            <div class="badge py">python</div>
+            <div id="python-editor" class="editor"></div>
+        </div>
+
+        <div class="pane">
+            <div class="badge swift">swift</div>
+            <pre id="swift-editor" class="editor language-swift"
+                style="margin:0;"></pre>
+        </div>
+
+    </div>
+
+    <div class="status">
+        STATUS: <span id="status" style="font-weight:bold; color:var(--btn-green)">PRONTO</span>
+    </div>
+</div>
+
+<!-- Prism -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-swift.min.js"></script>
+
+<!-- CodeJar -->
+<script type="module">
+import { CodeJar } from "https://medv.io/codejar/codejar.js";
+
+function prismHighlight(editor) {
+    Prism.highlightElement(editor);
+}
+
+const pyEditorEl = document.getElementById("python-editor");
+const jarPy = CodeJar(pyEditorEl, prismHighlight);
+
+// Código inicial
+jarPy.updateCode(`def fatorial(n):
+    if n <= 1:
+        return 1
+    return n * fatorial(n - 1)
+
+print(fatorial(5))`);
+
+const swiftOutput = document.getElementById("swift-editor");
+
+window.runTranspiler = async function() {
+    const code = jarPy.toString();
+    const status = document.getElementById("status");
+
+    status.innerText = "BUILDING...";
+    status.style.color = "#d4a52c";
+
+    try {
+        const r = await fetch("/transpile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source: code })
+        });
+
+        const result = await r.json();
+
+        if (!result.success) {
+            swiftOutput.textContent = "// ERRO:\n" + result.error;
+            status.innerText = "FAILED";
+            status.style.color = "#ff5555";
+        } else {
+            swiftOutput.textContent = result.output;
+            status.innerText = "SUCCESS";
+            status.style.color = "#2ea043";
+        }
+
+        Prism.highlightElement(swiftOutput);
+
+    } catch (e) {
+        status.innerText = "ERRO DE CONEXÃO";
+        status.style.color = "#ff5555";
+    }
+};
+</script>
+
+</body>
+</html>
