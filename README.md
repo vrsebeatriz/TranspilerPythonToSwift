@@ -162,34 +162,9 @@ Acesse: `http://127.0.0.1:5000`
 | `int(x)` | `Int(x) ?? 0` |
 | `float(x)` | `Double(x) ?? 0.0` |
 
-## 📝 Exemplos de Conversão
+## 📝 Exemplos de Conversão``
 
-### Exemplo 1: Fatorial
-**Python:**
-```python
-def factorial(n):
-    if n <= 1:
-        return 1
-    return n * factorial(n - 1)
-
-print(factorial(5))
-```
-
-**Swift:**
-```swift
-import Foundation
-
-func factorial(_ n: Int) -> Int {
-    if n <= 1 {
-        return 1
-    }
-    return n * factorial(n - 1)
-}
-
-print(factorial(5))
-```
-
-### Exemplo 2: Bubble Sort
+### Exemplo 1: Bubble Sort
 **Python:**
 ```python
 nums = [5, 3, 8, 2, 1]
@@ -219,7 +194,7 @@ for i in 0..<nums.count {
 print(nums)
 ```
 
-### Exemplo 3: Entrada de Usuário
+### Exemplo 2: Entrada de Usuário
 **Python:**
 ```python
 try:
@@ -306,6 +281,7 @@ templates/
 2. **Tipos Complexos**: Inferência de tipos para estruturas aninhadas é limitada
 3. **Performance**: Código gerado pode não ser otimizado
 4. **Bibliotecas**: Módulos Python específicos requerem implementação manual em Swift
+5. **Inferência de tipos:** Alguns tipos estão retornando Any ao invés do tipo correto. 
 
 ### Áreas para Melhoria
 - [ ] Suporte a mais built-ins do Python
