@@ -1,209 +1,11 @@
 import ast
 from typing import List, Optional, Dict, Any, Set, Tuple
-from dataclasses import dataclass, field
 
-# ===== EXCEÇÕES PERSONALIZADAS =====
-class TranspileError(Exception):
-    """Erro base para transpilação"""
-    pass
+from .exceptions import TranspileError, UnsupportedFeatureError
+from .symbol_table import SymbolTable, Symbol
+from .type_inference import TypeInferencer
+from .lexer import LexicalAnalyzer
 
-class UnsupportedFeatureError(TranspileError):
-    """Recurso do Python não suportado"""
-    def __init__(self, feature: str, node: ast.AST):
-        self.feature = feature
-        self.line = getattr(node, 'lineno', None)
-        msg = f"Recurso não suportado: {feature}"
-        if self.line:
-            msg += f" (linha {self.line})"
-        super().__init__(msg)
-
-# ===== TABELA DE SÍMBOLOS =====
-@dataclass
-class Symbol:
-    """Representa um símbolo (variável, função, etc)"""
-    name: str
-    type_hint: str = "Any"
-    is_mutable: bool = True
-    scope: str = "local"
-
-class SymbolTable:
-    """Gerencia escopos e símbolos"""
-    def __init__(self):
-        self.scopes: List[Dict[str, Symbol]] = [{}]  # Global scope
-        self.scope_names: List[str] = ["global"]
-    
-    def push_scope(self, name: str = "local"):
-        self.scopes.append({})
-        self.scope_names.append(name)
-    
-    def pop_scope(self):
-        if len(self.scopes) > 1:
-            self.scopes.pop()
-            self.scope_names.pop()
-    
-    def declare(self, name: str, symbol: Symbol):
-        self.scopes[-1][name] = symbol
-    
-    def lookup(self, name: str) -> Optional[Symbol]:
-        # Busca do escopo atual para o global
-        for scope in reversed(self.scopes):
-            if name in scope:
-                return scope[name]
-        return None
-    
-    def is_declared_in_current_scope(self, name: str) -> bool:
-        return name in self.scopes[-1]
-
-# ===== INFERÊNCIA DE TIPOS (Versão simplificada) =====
-class TypeInferencer(ast.NodeVisitor):
-    """Realiza inferência de tipos em múltiplos passes"""
-    
-    def __init__(self):
-        self.func_signatures: Dict[str, Dict[str, str]] = {}  # func -> {param: type, 'return': type}
-        self.var_types: Dict[str, str] = {}  # var -> type
-        
-    def infer(self, tree: ast.AST):
-        """Executa inferência em múltiplos passes"""
-        # Pass 1: Coleta assinaturas de funções
-        self._collect_function_signatures(tree)
-        # Pass 2: Infere tipos de variáveis
-        self._infer_variable_types(tree)
-    
-    def _collect_function_signatures(self, tree: ast.AST):
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                sig = {'return': 'Void'}
-                
-                # Coleta tipos de argumentos
-                for arg in node.args.args:
-                    if arg.arg == 'self':
-                        continue
-                    # Usa annotation se disponível
-                    if arg.annotation:
-                        sig[arg.arg] = self._annotation_to_swift(arg.annotation)
-                    else:
-                        sig[arg.arg] = 'Any'
-                
-                # Tenta inferir tipo de retorno
-                if node.returns:
-                    sig['return'] = self._annotation_to_swift(node.returns)
-                else:
-                    sig['return'] = self._infer_return_type(node)
-                
-                self.func_signatures[node.name] = sig
-    
-    def _infer_return_type(self, func: ast.FunctionDef) -> str:
-        """Infere tipo de retorno analisando statements return"""
-        return_types = set()
-        
-        for node in ast.walk(func):
-            if isinstance(node, ast.Return) and node.value:
-                rt = self._infer_expr_type(node.value)
-                if rt:
-                    return_types.add(rt)
-        
-        if not return_types:
-            return 'Void'
-        if len(return_types) == 1:
-            return return_types.pop()
-        # Múltiplos tipos -> usa Any
-        return 'Any'
-    
-    def _infer_variable_types(self, tree: ast.AST):
-        """Infere tipos de variáveis através de atribuições"""
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                typ = self._infer_expr_type(node.value)
-                if typ:
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            self.var_types[target.id] = typ
-    
-    def _infer_expr_type(self, node: ast.AST) -> Optional[str]:
-        """Infere tipo de uma expressão"""
-        if isinstance(node, ast.Constant):
-            v = node.value
-            if isinstance(v, bool):
-                return 'Bool'
-            if isinstance(v, int):
-                return 'Int'
-            if isinstance(v, float):
-                return 'Double'
-            if isinstance(v, str):
-                return 'String'
-        
-        elif isinstance(node, ast.List):
-            if node.elts:
-                # Simplificação: usa o tipo do primeiro elemento.
-                elem_type = self._infer_expr_type(node.elts[0])
-                return f'[{elem_type}]' if elem_type else '[Any]'
-            return '[Any]'
-        
-        elif isinstance(node, ast.Dict):
-            if node.keys and node.values:
-                # Simplificação: usa o tipo do primeiro par.
-                key_type = self._infer_expr_type(node.keys[0])
-                val_type = self._infer_expr_type(node.values[0])
-                if key_type and val_type:
-                    return f'[{key_type}: {val_type}]'
-            return '[String: Any]'
-        
-        elif isinstance(node, ast.BinOp):
-            left = self._infer_expr_type(node.left)
-            right = self._infer_expr_type(node.right)
-            if left == right:
-                return left
-            if left in ('Double', 'Int') and right in ('Double', 'Int'):
-                return 'Double' # Promote to Double if mixed numeric
-        
-        elif isinstance(node, ast.Name):
-            return self.var_types.get(node.id)
-        
-        # Chamadas de função: Tenta inferir pelo nome da função
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            func_name = node.func.id
-            if func_name in self.func_signatures:
-                return self.func_signatures[func_name].get('return')
-            
-            # Mapeamento de builtins comuns
-            if func_name in ('int', 'len', 'sum', 'min', 'max'):
-                return 'Int'
-            if func_name in ('float', 'abs'):
-                return 'Double'
-            if func_name == 'str':
-                return 'String'
-            if func_name == 'list':
-                return '[Any]'
-        
-        return None
-    
-    def _annotation_to_swift(self, node: ast.AST) -> str:
-        """Converte annotation Python para tipo Swift"""
-        if isinstance(node, ast.Name):
-            mapping = {
-                'int': 'Int',
-                'float': 'Double',
-                'str': 'String',
-                'bool': 'Bool',
-                'list': '[Any]',
-                'dict': '[String: Any]',
-            }
-            return mapping.get(node.id, node.id)
-        
-        elif isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.Name):
-                if node.value.id == 'List':
-                    elem = self._annotation_to_swift(node.slice)
-                    return f'[{elem}]'
-                elif node.value.id == 'Dict':
-                    if isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2:
-                        k = self._annotation_to_swift(node.slice.elts[0])
-                        v = self._annotation_to_swift(node.slice.elts[1])
-                        return f'[{k}: {v}]'
-        
-        return 'Any'
-
-# ===== TRANSPILADOR PRINCIPAL (CORREÇÕES DE INDENTAÇÃO APLICADAS) =====
 class PyToSwiftTranspiler(ast.NodeVisitor):
     def __init__(self):
         self.lines: List[str] = []
@@ -211,38 +13,29 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         self.current_class: Optional[str] = None
         self.symbol_table = SymbolTable()
         self.type_inferencer = TypeInferencer()
-        self.warnings: List[str] = []
+        self.lexer = LexicalAnalyzer()
     
     # ===== UTILITÁRIOS =====
     def indent(self) -> str:
         return "    " * self.indent_level
     
     def emit(self, line: str = ""):
-        # Garante que cada chamada de emit gere uma nova linha
         self.lines.append(f"{self.indent()}{line}")
     
     def warn(self, message: str, node: ast.AST = None):
-        """Adiciona um aviso"""
-        if node and hasattr(node, 'lineno'):
-            message = f"Linha {node.lineno}: {message}"
-        self.warnings.append(message)
+        self.lexer.warn(message, node)
+    
+    @property
+    def warnings(self):
+        return self.lexer.warnings
     
     def escape_string(self, s: str) -> str:
-        """Escapa string corretamente para Swift"""
-        return (s.replace('\\', '\\\\')
-                 .replace('"', '\\"')
-                 .replace('\n', '\\n')
-                 .replace('\t', '\\t')
-                 .replace('\r', '\\r'))
+        return self.lexer.escape_string(s)
     
     # ===== GERAÇÃO =====
     def generate(self, source: str) -> str:
         """Método principal para gerar código Swift"""
-        try:
-            tree = ast.parse(source)
-        except SyntaxError as e:
-            raise TranspileError(f"Erro de sintaxe Python: {e}")
-        
+        tree = self.lexer.analyze(source)
         self.type_inferencer.infer(tree)
         
         # Adiciona header
@@ -274,11 +67,9 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
                 isinstance(node.test.left, ast.Name) and
                 node.test.left.id == "__name__")
     
-    # ===== VISITANTES - ESTRUTURAS (APLICADA LÓGICA DE INDENTAÇÃO EXPLÍCITA) =====
+    # ===== VISITANTES - ESTRUTURAS =====
     
     def visit_Module(self, node: ast.Module):
-        # A visita do módulo é tratada em generate(), mas esta função deve permanecer
-        # para compatibilidade com o ast.NodeVisitor
         pass 
         
     def visit_Import(self, node: ast.Import):
@@ -297,7 +88,6 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         self.emit(f"// from {module} import {', '.join(names)}  // ⚠️ Mapear manualmente")
     
     def visit_ClassDef(self, node: ast.ClassDef):
-        """Transpila definição de classe"""
         bases = []
         for b in node.bases:
             if isinstance(b, ast.Name):
@@ -308,7 +98,7 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         base_str = f": {', '.join(bases)}" if bases else ""
         self.emit(f"class {node.name}{base_str} {{")
         
-        self.indent_level += 1 # Início do bloco
+        self.indent_level += 1
         prev_class = self.current_class
         self.current_class = node.name
         self.symbol_table.push_scope(f"class:{node.name}")
@@ -318,12 +108,11 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         
         self.symbol_table.pop_scope()
         self.current_class = prev_class
-        self.indent_level -= 1 # Fim do bloco
+        self.indent_level -= 1
         self.emit("}")
         self.emit("")
     
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        """Transpila definição de função"""
         self.symbol_table.push_scope(f"func:{node.name}")
         
         args = []
@@ -345,10 +134,10 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         else:
             self.emit(f"func {node.name}({arglist}){ret_annotation} {{")
         
-        self.indent_level += 1 # Início do bloco
+        self.indent_level += 1
         for stmt in node.body:
             self.visit(stmt)
-        self.indent_level -= 1 # Fim do bloco
+        self.indent_level -= 1
         self.emit("}")
         self.emit("")
         
@@ -360,7 +149,7 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         else:
             self.emit("return")
     
-    # ===== VISITANTES - ATRIBUIÇÕES (Inalterado) =====
+    # ===== VISITANTES - ATRIBUIÇÕES =====
     
     def visit_Assign(self, node: ast.Assign):
         """Transpila atribuições"""
@@ -461,7 +250,7 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         value = self._expr_str(node.value)
         self.emit(f"{target} {op}= {value}")
     
-    # ===== VISITANTES - CONTROLE DE FLUXO (CORRIGIDO) =====
+    # ===== VISITANTES - CONTROLE DE FLUXO =====
     
     def visit_If(self, node: ast.If):
         """Transpila if/elif/else com indentação correta"""
@@ -591,7 +380,7 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
     def visit_Pass(self, node: ast.Pass):
         self.emit("// pass")
     
-    # ===== VISITANTES - EXPRESSÕES E TRY/EXCEPT (CORRIGIDO) =====
+    # ===== VISITANTES - EXPRESSÕES E TRY/EXCEPT =====
     
     def visit_Expr(self, node: ast.Expr):
         self.emit(self._expr_str(node.value))
@@ -680,9 +469,7 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         
         return False
     
-    # O método _visit_block foi removido.
-    
-    # ===== EXPRESSÕES (Inalterado) =====
+    # ===== EXPRESSÕES =====
     
     def _expr_str(self, node: ast.AST) -> str:
         if node is None:
@@ -1037,7 +824,7 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
         elements = ', '.join(self._expr_str(e) for e in node.elts)
         return f"Set([{elements}])"
     
-    # ===== AUXILIARES PARA OPERADORES (Inalterado) =====
+    # ===== AUXILIARES PARA OPERADORES =====
     def _binop_symbol(self, op: ast.AST) -> str:
         mapping = {
             ast.Add: '+',
@@ -1069,9 +856,6 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
     # ===== FALLBACK =====
     def generic_visit(self, node: ast.AST):
         self.warn(f"Nó não tratado: {node.__class__.__name__}", node)
-        # Não chamamos super().generic_visit para evitar loop infinito em casos não tratados
-        # ou para evitar que nodes filhos sejam visitados sem controle de indentação.
-        # A lógica de visita já é feita manualmente nas funções de bloco.
 
 # ===== FUNÇÃO DE CONVENIÊNCIA =====
 def transpile(source: str) -> str:
@@ -1080,28 +864,3 @@ def transpile(source: str) -> str:
     """
     transpiler = PyToSwiftTranspiler()
     return transpiler.generate(source)
-
-
-# ===== EXEMPLO DE USO E TESTES (ATUALIZADOS) =====
-if __name__ == "__main__":
-    
-    # Teste 5: Bubble Sort (o que falhou na indentação)
-    test_indentation = """
-var nums = [5, 3, 8, 2, 1]
-
-for i in range(len(nums)):
-    for j in range(len(nums) - 1):
-        if nums[j] > nums[j + 1]:
-            nums[j], nums[j + 1] = nums[j + 1], nums[j]
-
-print(nums)
-"""
-
-    print("=" * 60)
-    print("TESTE DE INDENTAÇÃO CORRIGIDA (Bubble Sort)")
-    print("=" * 60)
-    try:
-        result = transpile(test_indentation)
-        print(result)
-    except Exception as e:
-        print(f"Erro: {e}")
