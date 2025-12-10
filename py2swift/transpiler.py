@@ -94,107 +94,86 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
                 bases.append(b.id)
             else:
                 bases.append(self._expr_str(b))
-        
+
         base_str = f": {', '.join(bases)}" if bases else ""
         self.emit(f"class {node.name}{base_str} {{")
-        
+
         self.indent_level += 1
         prev_class = self.current_class
         self.current_class = node.name
         self.symbol_table.push_scope(f"class:{node.name}")
-        
+
+        # MELHORIA: Traduz atributos de classe
         for stmt in node.body:
-            self.visit(stmt)
-        
+            if isinstance(stmt, ast.Assign):
+                for target in stmt.targets:
+                    if isinstance(target, ast.Name):
+                        self.emit(f"static var {target.id}: {self._infer_type(stmt.value)} = {self._expr_str(stmt.value)}")
+            elif isinstance(stmt, ast.FunctionDef):
+                self.visit(stmt)
+
         self.symbol_table.pop_scope()
         self.current_class = prev_class
         self.indent_level -= 1
         self.emit("}")
         self.emit("")
-    
+
     def visit_FunctionDef(self, node: ast.FunctionDef):
         self.symbol_table.push_scope(f"func:{node.name}")
-        
+
         args = []
         for arg in node.args.args:
             if arg.arg == 'self':
                 continue
             sig = self.type_inferencer.func_signatures.get(node.name, {})
-            
-            # MELHORIA: Usa tipo inferido ou padrão mais inteligente
+
             arg_type = sig.get(arg.arg, 'Any')
-            
-            # Se ainda for Any, tenta inferir baseado no nome ou contexto
+
             if arg_type == 'Any':
-                # Heurística baseada no nome do parâmetro
                 if arg.arg in ('n', 'num', 'number', 'count', 'index', 'i', 'j', 'k'):
                     arg_type = 'Int'
                 elif arg.arg in ('x', 'y', 'value', 'val', 'amount'):
-                    arg_type = 'Double'  # Mais genérico para números
-            
+                    arg_type = 'Double'
+
             args.append(f"_{arg.arg}: {arg_type}")
-        
+
         arglist = ', '.join(args)
-        
+
         sig = self.type_inferencer.func_signatures.get(node.name, {})
         return_type = sig.get('return', 'Void')
-        
+
         # CORREÇÃO SIMPLIFICADA: Para funções com nome sugestivo de inteiros, força Int
         if return_type == 'Double' and self._looks_like_int_function(node):
             return_type = 'Int'
-        
+
         # CORREÇÃO: Se a função opera apenas com inteiros, força Int
         if return_type in ['Any', 'Double'] and self._function_uses_only_ints(node):
             return_type = 'Int'
-        
+
         ret_annotation = f" -> {return_type}" if return_type != 'Void' else ""
-        
-        if self.current_class and node.name == '__init__':
-            self.emit(f"init({arglist}) {{")
+
+        # MELHORIA: Suporte para métodos de classe
+        if any(isinstance(decorator, ast.Name) and decorator.id == 'classmethod' for decorator in node.decorator_list):
+            self.emit(f"class func {node.name}({arglist}){ret_annotation} {{")
         else:
             self.emit(f"func {node.name}({arglist}){ret_annotation} {{")
-        
+
         self.indent_level += 1
         for stmt in node.body:
             self.visit(stmt)
         self.indent_level -= 1
         self.emit("}")
-        self.emit("")
-        
-        self.symbol_table.pop_scope()
-    
-    def _looks_like_int_function(self, func: ast.FunctionDef) -> bool:
-        """Verifica se a função parece operar com inteiros baseado no nome"""
-        int_keywords = ['fatorial', 'factorial', 'fibonacci', 'fib', 
-                       'gcd', 'lcm', 'sum', 'product', 'count', 'length', 'size']
-        return any(keyword in func.name.lower() for keyword in int_keywords)
-    
-    def _function_uses_only_ints(self, func: ast.FunctionDef) -> bool:
-        """Verifica se a função usa apenas inteiros"""
-        for node in ast.walk(func):
-            if isinstance(node, ast.BinOp):
-                left_type = self.type_inferencer._infer_expr_type(node.left)
-                right_type = self.type_inferencer._infer_expr_type(node.right)
-                if left_type not in ['Int', None] or right_type not in ['Int', None]:
-                    return False
-            elif isinstance(node, ast.Constant):
-                if isinstance(node.value, float):
-                    return False
-        return True
 
-    def _function_has_math_operations(self, func: ast.FunctionDef) -> bool:
-        """Verifica se a função contém operações matemáticas"""
-        for node in ast.walk(func):
-            if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
-                return True
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in ('sum', 'min', 'max', 'abs'):
-                    return True
-        return False
+        self.symbol_table.pop_scope()
 
     def visit_Return(self, node: ast.Return):
         if node.value:
-            self.emit(f"return {self._expr_str(node.value)}")
+            # MELHORIA: Gera código idiomático para retornos
+            return_expr = self._expr_str(node.value)
+            if return_expr == 'None':
+                self.emit("return")
+            else:
+                self.emit(f"return {return_expr}")
         else:
             self.emit("return")
     
