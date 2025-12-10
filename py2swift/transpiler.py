@@ -147,8 +147,21 @@ class PyToSwiftTranspiler(ast.NodeVisitor):
             return_type = 'Int'
 
         # CORREÇÃO: Se a função opera apenas com inteiros, força Int
-        if return_type in ['Any', 'Double'] and self._function_uses_only_ints(node):
+        # Adiciona logs para depuração
+        import logging
+        logging.debug(f"Analisando tipo de retorno para a função '{node.name}'. Tipo inferido: {return_type}")
+
+        if return_type == 'Double' and self._looks_like_int_function(node):
+            logging.debug(f"Função '{node.name}' parece operar com inteiros. Alterando tipo de retorno para 'Int'.")
             return_type = 'Int'
+
+        if return_type in ['Any', 'Double']:
+            try:
+                if self._function_uses_only_ints(node):
+                    logging.debug(f"Função '{node.name}' usa apenas inteiros. Alterando tipo de retorno para 'Int'.")
+                    return_type = 'Int'
+            except Exception as e:
+                logging.exception(f"Erro ao verificar se a função '{node.name}' usa apenas inteiros: {e}")
 
         ret_annotation = f" -> {return_type}" if return_type != 'Void' else ""
 
